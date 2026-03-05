@@ -677,15 +677,8 @@ export async function createPane(
     await WindowManager.getInstance().updateWindowName(targetWindowId, allPanesInWindow);
   }
 
-  // Switch back to the original pane
-  await tmuxService.selectPane(originalPaneId);
-
-  // Re-set the title for the dmux pane
-  try {
-    await tmuxService.setPaneTitle(originalPaneId, "dmux");
-  } catch {
-    // Ignore if setting title fails
-  }
+  // Focus the new pane so the user can start working immediately
+  await tmuxService.selectPane(paneInfo);
 
   return {
     pane: newPane,
@@ -732,10 +725,31 @@ export async function createShellPaneTmux(options: {
       options.existingPanes,
     );
   } else {
+    // Derive a location-aware slug so the user knows where the shell opens
+    const cwdBasename = path.basename(options.cwd);
+    const isInWorktree = options.cwd.includes('.dmux/worktrees/');
+    const locationLabel = isInWorktree ? cwdBasename : 'root';
+
     shellPane = await createShellPaneMeta(
       tmuxResult.paneId,
       getNextDmuxId(options.existingPanes),
+      undefined,
+      tmuxResult.windowId,
     );
+    // Override generic "shell-N" with location-aware name, dedup if needed
+    const baseSlug = `term@${locationLabel}`;
+    const existingSlugs = options.existingPanes.map(p => p.slug);
+    let slug = baseSlug;
+    if (existingSlugs.includes(slug)) {
+      let n = 2;
+      while (existingSlugs.includes(`${baseSlug}-${n}`)) n++;
+      slug = `${baseSlug}-${n}`;
+    }
+    shellPane.slug = slug;
+    try {
+      const tmuxService = TmuxService.getInstance();
+      await tmuxService.setPaneTitle(tmuxResult.paneId, slug);
+    } catch {}
   }
 
   shellPane.projectRoot = options.projectRoot;
@@ -763,14 +777,9 @@ export async function createShellPaneTmux(options: {
     await WindowManager.getInstance().updateWindowName(tmuxResult.windowId, allPanesInWindow);
   }
 
-  // Restore focus to sidebar
+  // Focus the new pane so the user can start working immediately
   const tmuxService = TmuxService.getInstance();
-  await tmuxService.selectPane(tmuxResult.originalPaneId);
-  try {
-    await tmuxService.setPaneTitle(tmuxResult.originalPaneId, "dmux");
-  } catch {
-    // Ignore if setting title fails
-  }
+  await tmuxService.selectPane(tmuxResult.paneId);
 
   return shellPane;
 }

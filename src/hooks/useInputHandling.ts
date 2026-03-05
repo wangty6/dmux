@@ -1,3 +1,4 @@
+import path from "path"
 import { useEffect, useRef } from "react"
 import { useInput } from "ink"
 import type { DmuxPane } from "../types.js"
@@ -177,7 +178,10 @@ export function useInputHandling(params: UseInputHandlingParams) {
   const handleCreateTerminalPane = async (targetProjectRoot: string) => {
     try {
       setIsCreatingPane(true)
-      setStatusMessage("Creating terminal pane...")
+      const cwdLabel = targetProjectRoot.includes('.dmux/worktrees/')
+        ? path.basename(targetProjectRoot)
+        : 'project root'
+      setStatusMessage(`Opening terminal in ${cwdLabel}...`)
 
       const shellPane = await createShellPaneTmux({
         cwd: targetProjectRoot,
@@ -189,13 +193,13 @@ export function useInputHandling(params: UseInputHandlingParams) {
       await savePanes([...panes, shellPane])
 
       setIsCreatingPane(false)
-      setStatusMessage("Terminal pane created")
+      setStatusMessage(`Terminal opened in ${cwdLabel}`)
       setTimeout(() => setStatusMessage(""), STATUS_MESSAGE_DURATION_SHORT)
 
       await loadPanes()
     } catch (error: any) {
       setIsCreatingPane(false)
-      setStatusMessage(`Failed to create terminal pane: ${error.message}`)
+      setStatusMessage(`Failed to open terminal: ${error.message}`)
       setTimeout(() => setStatusMessage(""), STATUS_MESSAGE_DURATION_LONG)
     }
   }
@@ -203,7 +207,7 @@ export function useInputHandling(params: UseInputHandlingParams) {
   const handleCreateRootShellPane = async () => {
     try {
       setIsCreatingPane(true)
-      setStatusMessage("Creating root shell pane...")
+      setStatusMessage("Opening root shell...")
 
       const rootShellPane = await createShellPaneTmux({
         cwd: projectRoot,
@@ -216,13 +220,13 @@ export function useInputHandling(params: UseInputHandlingParams) {
       await savePanes([...panes, rootShellPane])
 
       setIsCreatingPane(false)
-      setStatusMessage("Root shell pane created")
+      setStatusMessage("Root shell opened")
       setTimeout(() => setStatusMessage(""), STATUS_MESSAGE_DURATION_SHORT)
 
       await loadPanes()
     } catch (error: any) {
       setIsCreatingPane(false)
-      setStatusMessage(`Failed to create root shell pane: ${error.message}`)
+      setStatusMessage(`Failed to open root shell: ${error.message}`)
       setTimeout(() => setStatusMessage(""), STATUS_MESSAGE_DURATION_LONG)
     }
   }
@@ -699,14 +703,14 @@ export function useInputHandling(params: UseInputHandlingParams) {
         await handleReopenWorktree(result.slug, result.path, targetProjectRoot)
       }
       return
+    } else if (!isLoading && input === "N") {
+      // Create agent pane branching from session project root (ignores selected pane's project)
+      await handleCreateAgentPane(projectRoot)
+      return
     } else if (
-      !isLoading &&
-      (
-        input === "p" ||
-        input === "N"
-      )
+      !isLoading && input === "p"
     ) {
-      // Create pane in another project ([p], with Shift+N fallback)
+      // Create pane in another project
       await handleCreatePaneInProject()
       return
     } else if (!isLoading && input === "n") {

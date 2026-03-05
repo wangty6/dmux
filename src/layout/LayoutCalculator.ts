@@ -71,6 +71,17 @@ export class LayoutCalculator {
       };
     }
 
+    // Special case: single pane uses full terminal width for maximum workspace
+    if (numContentPanes === 1) {
+      return {
+        cols: 1,
+        rows: 1,
+        windowWidth: terminalWidth,
+        paneDistribution: [1],
+        actualPaneWidth: terminalWidth - SIDEBAR_WIDTH,
+      };
+    }
+
     // Try all column counts and score them to find the best layout
     let bestLayout: LayoutConfiguration | null = null;
     let bestScore = -1;
