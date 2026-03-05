@@ -426,6 +426,8 @@ export class PopupManager {
         logsData
       )
 
+      this.ignoreInputBriefly()
+
       if (result.success) {
         stateManager.markAllLogsAsRead()
 
