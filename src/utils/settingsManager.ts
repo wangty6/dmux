@@ -149,6 +149,12 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     shiftStep: 3,
   },
   {
+    key: 'openRouterModel',
+    label: 'OpenRouter Model',
+    description: 'Preferred model for AI features (slugs, merge messages). Tried first, then falls back to defaults.',
+    type: 'text',
+  },
+  {
     key: 'hooks' as any,
     label: 'Manage Hooks',
     description: 'View and edit dmux lifecycle hooks',

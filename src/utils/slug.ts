@@ -1,4 +1,28 @@
 import { execSync } from 'child_process';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+
+/** Default OpenRouter model fallback list */
+export const DEFAULT_OPENROUTER_MODELS = ['google/gemini-2.5-flash', 'x-ai/grok-4-fast:free', 'openai/gpt-4o-mini'];
+
+/**
+ * Build the model list: user-preferred model first, then defaults (deduped).
+ * If no preferredModel is passed, reads from global settings (~/.dmux.global.json).
+ */
+export function getOpenRouterModels(preferredModel?: string): string[] {
+  let model = preferredModel;
+  if (!model) {
+    try {
+      const global = JSON.parse(readFileSync(join(homedir(), '.dmux.global.json'), 'utf-8'));
+      model = global.openRouterModel;
+    } catch {
+      // No global settings or parse error
+    }
+  }
+  if (!model) return DEFAULT_OPENROUTER_MODELS;
+  return [model, ...DEFAULT_OPENROUTER_MODELS.filter(m => m !== model)];
+}
 
 export const callClaudeCode = async (prompt: string): Promise<string | null> => {
   try {
@@ -23,8 +47,7 @@ export const generateSlug = async (prompt: string): Promise<string> => {
 
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (apiKey) {
-    // Try multiple models with fallback
-    const models = ['google/gemini-2.5-flash', 'x-ai/grok-4-fast:free', 'openai/gpt-4o-mini'];
+    const models = getOpenRouterModels();
 
     for (const model of models) {
       try {

@@ -8,6 +8,7 @@ import { execSync } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import { LogService } from '../services/LogService.js';
+import { getOpenRouterModels } from './slug.js';
 
 /**
  * Fetch with timeout wrapper
@@ -36,7 +37,7 @@ async function callOpenRouter(prompt: string, maxTokens: number = 1000, timeoutM
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return null;
 
-  const models = ['google/gemini-2.5-flash', 'x-ai/grok-4-fast:free', 'openai/gpt-4o-mini'];
+  const models = getOpenRouterModels();
 
   for (const model of models) {
     try {

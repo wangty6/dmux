@@ -97,6 +97,9 @@ export interface DmuxSettings {
   maxPaneWidth?: number;
   // Maximum content panes per tmux window before overflow to new window
   maxPanesPerWindow?: number;
+  // Preferred OpenRouter model for AI features (slug generation, merge messages, etc.)
+  // When set, this model is tried first before falling back to the default model list.
+  openRouterModel?: string;
 }
 
 export type SettingsScope = 'global' | 'project';
