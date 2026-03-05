@@ -84,6 +84,7 @@ export interface UntrackedPaneInfo {
   paneId: string;
   title: string;
   command: string;
+  windowId?: string;
 }
 
 /**
@@ -107,7 +108,7 @@ export async function getUntrackedPanes(
     // shell detection to avoid cross-window interference in multi-window mode.
     const { execSync } = await import('child_process');
     const output = execSync(
-      `tmux list-panes -F '#{pane_id}::#{pane_title}::#{pane_current_command}'`,
+      `tmux list-panes -F '#{pane_id}::#{pane_title}::#{pane_current_command}::#{window_id}'`,
       { encoding: 'utf-8', stdio: 'pipe' }
     ).trim();
 
@@ -117,7 +118,7 @@ export async function getUntrackedPanes(
     const lines = output.split('\n');
 
     for (const line of lines) {
-      const [paneId, title, command] = line.split('::');
+      const [paneId, title, command, windowId] = line.split('::');
 
       if (!paneId || !paneId.startsWith('%')) continue;
 
@@ -156,7 +157,7 @@ export async function getUntrackedPanes(
       // Skip already tracked panes
       if (trackedPaneIds.includes(paneId)) continue;
 
-      untrackedPanes.push({ paneId, title: title || '', command: command || '' });
+      untrackedPanes.push({ paneId, title: title || '', command: command || '', windowId: windowId || undefined });
     }
 
     return untrackedPanes;
@@ -196,7 +197,7 @@ async function detectPaneProjectInfo(
  * @param existingTitle Optional existing title (used for display but not for tracking)
  * @returns DmuxPane object for the shell pane
  */
-export async function createShellPane(paneId: string, nextId: number, existingTitle?: string): Promise<DmuxPane> {
+export async function createShellPane(paneId: string, nextId: number, existingTitle?: string, windowId?: string): Promise<DmuxPane> {
   const tmuxService = TmuxService.getInstance();
   const shellType = await detectShellType(paneId);
   const paneProjectInfo = await detectPaneProjectInfo(paneId);
@@ -226,6 +227,7 @@ export async function createShellPane(paneId: string, nextId: number, existingTi
     projectName: paneProjectInfo.projectName,
     type: 'shell',
     shellType,
+    windowId,
   };
 }
 

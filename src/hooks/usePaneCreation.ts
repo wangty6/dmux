@@ -26,33 +26,6 @@ interface CreateNewPaneOptions {
   skipAgentSelection?: boolean;
 }
 
-const MAX_PARALLEL_PANE_CREATIONS = 4;
-
-function getParallelPaneCreationLimit(totalAgents: number): number {
-  if (totalAgents <= 1) {
-    return 1;
-  }
-
-  const overrideRaw = process.env.DMUX_PANE_CREATE_CONCURRENCY;
-  if (overrideRaw) {
-    const override = Number.parseInt(overrideRaw, 10);
-    if (Number.isFinite(override) && override > 0) {
-      return Math.min(totalAgents, override);
-    }
-  }
-
-  const maybeAvailableParallelism = (os as any).availableParallelism;
-  const cpuCount = typeof maybeAvailableParallelism === 'function'
-    ? maybeAvailableParallelism.call(os)
-    : os.cpus().length;
-  const conservativeLimit = Math.max(1, Math.floor(cpuCount / 2));
-
-  return Math.max(
-    1,
-    Math.min(totalAgents, MAX_PARALLEL_PANE_CREATIONS, conservativeLimit)
-  );
-}
-
 export default function usePaneCreation({
   panes,
   savePanes,
@@ -161,88 +134,55 @@ export default function usePaneCreation({
 
     const isMultiLaunch = dedupedAgents.length > 1;
     const slugBase = isMultiLaunch ? await generateSlug(prompt) : undefined;
-    const parallelLimit = getParallelPaneCreationLimit(dedupedAgents.length);
 
     try {
       setIsCreatingPane(true);
-      if (parallelLimit > 1) {
-        setStatusMessage(
-          `Creating ${dedupedAgents.length} panes (${parallelLimit} parallel)...`
-        );
-      } else {
-        setStatusMessage(`Creating ${dedupedAgents.length} pane${dedupedAgents.length === 1 ? '' : 's'}...`);
-      }
+      setStatusMessage(`Creating ${dedupedAgents.length} pane${dedupedAgents.length === 1 ? '' : 's'}...`);
 
-      const createdByIndex: Array<DmuxPane | null> = new Array(dedupedAgents.length).fill(null);
-
-      const firstAgent = dedupedAgents[0];
-      const firstPane = await createPaneInternal(prompt, firstAgent, {
-        existingPanes: panesForCreation,
-        slugSuffix: isMultiLaunch ? getAgentSlugSuffix(firstAgent) : undefined,
-        slugBase,
-        targetProjectRoot: options.targetProjectRoot,
-      });
-      createdByIndex[0] = firstPane;
-
-      const remainingAgents = dedupedAgents.slice(1);
-      const workerCount = Math.min(parallelLimit, remainingAgents.length);
-      let nextTaskIndex = 0;
+      const createdPanesList: DmuxPane[] = [];
       const failures: Array<{ agent: AgentName; error: unknown }> = [];
 
-      const workers = Array.from({ length: workerCount }, async () => {
-        while (nextTaskIndex < remainingAgents.length) {
-          const currentTaskIndex = nextTaskIndex;
-          nextTaskIndex += 1;
-          const selectedAgent = remainingAgents[currentTaskIndex];
-          const agentResultIndex = currentTaskIndex + 1;
-
-          try {
-            const createdSoFar = createdByIndex.filter(
-              (pane): pane is DmuxPane => pane !== null
-            );
-            const pane = await createPaneInternal(prompt, selectedAgent, {
-              existingPanes: [...panesForCreation, ...createdSoFar],
-              slugSuffix: getAgentSlugSuffix(selectedAgent),
-              slugBase,
-              targetProjectRoot: options.targetProjectRoot,
-            });
-            createdByIndex[agentResultIndex] = pane;
-          } catch (error) {
-            failures.push({ agent: selectedAgent, error });
-            LogService.getInstance().error(
-              `Failed to create pane for agent ${selectedAgent}`,
-              'usePaneCreation',
-              undefined,
-              error instanceof Error ? error : undefined
-            );
-          }
+      // Create panes sequentially to avoid window allocation race conditions.
+      // Parallel creation caused stale existingPanes snapshots, leading to
+      // multiple panes being allocated to the same window beyond the limit.
+      for (const selectedAgent of dedupedAgents) {
+        try {
+          const pane = await createPaneInternal(prompt, selectedAgent, {
+            existingPanes: [...panesForCreation, ...createdPanesList],
+            slugSuffix: isMultiLaunch ? getAgentSlugSuffix(selectedAgent) : undefined,
+            slugBase,
+            targetProjectRoot: options.targetProjectRoot,
+          });
+          createdPanesList.push(pane);
+        } catch (error) {
+          failures.push({ agent: selectedAgent, error });
+          LogService.getInstance().error(
+            `Failed to create pane for agent ${selectedAgent}`,
+            'usePaneCreation',
+            undefined,
+            error instanceof Error ? error : undefined
+          );
         }
-      });
+      }
 
-      await Promise.all(workers);
-
-      const createdPanes = createdByIndex.filter(
-        (pane): pane is DmuxPane => pane !== null
-      );
-
-      if (createdPanes.length > 0) {
-        const updatedPanes = [...panesForCreation, ...createdPanes];
+      if (createdPanesList.length > 0) {
+        const updatedPanes = [...panesForCreation, ...createdPanesList];
         await savePanes(updatedPanes);
         await loadPanes();
       }
 
       if (failures.length > 0) {
         setStatusMessage(
-          `Created ${createdPanes.length}/${dedupedAgents.length} panes (${failures.length} failed)`
+          `Created ${createdPanesList.length}/${dedupedAgents.length} panes (${failures.length} failed)`
         );
       } else {
         setStatusMessage(
-          `Created ${createdPanes.length} pane${createdPanes.length === 1 ? '' : 's'}`
+          `Created ${createdPanesList.length} pane${createdPanesList.length === 1 ? '' : 's'}`
         );
       }
       setTimeout(() => setStatusMessage(""), 3000);
 
-      return createdPanes;
+      return createdPanesList;
     } catch (error) {
       LogService.getInstance().error(
         'Failed to create panes',

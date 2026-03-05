@@ -2,11 +2,9 @@ import { useEffect, useRef } from "react"
 import { useInput } from "ink"
 import type { DmuxPane } from "../types.js"
 import { StateManager } from "../shared/StateManager.js"
-import { TmuxService } from "../services/TmuxService.js"
 import {
   STATUS_MESSAGE_DURATION_SHORT,
   STATUS_MESSAGE_DURATION_LONG,
-  ANIMATION_DELAY,
 } from "../constants/timing.js"
 import { PaneAction } from "../actions/index.js"
 import { getMainBranch, getOrphanedWorktrees } from "../utils/git.js"
@@ -19,7 +17,7 @@ import {
   getProjectActionByIndex,
   type ProjectActionItem,
 } from "../utils/projectActions.js"
-import { createShellPane, createRootShellPane, getNextDmuxId } from "../utils/shellPaneDetection.js"
+import { createShellPaneTmux } from "../utils/paneCreation.js"
 import type { AgentName } from "../utils/agentLaunch.js"
 
 // Type for the action system returned by useActionSystem hook
@@ -181,25 +179,19 @@ export function useInputHandling(params: UseInputHandlingParams) {
       setIsCreatingPane(true)
       setStatusMessage("Creating terminal pane...")
 
-      const tmuxService = TmuxService.getInstance()
-      const newPaneId = await tmuxService.splitPane({ cwd: targetProjectRoot })
-
-      // Wait for pane creation to settle
-      await new Promise((resolve) => setTimeout(resolve, ANIMATION_DELAY))
-
-      // Persist shell pane immediately with project metadata so grouping is stable.
-      const shellPane = await createShellPane(
-        newPaneId,
-        getNextDmuxId(panes)
-      )
-      shellPane.projectRoot = targetProjectRoot
+      const shellPane = await createShellPaneTmux({
+        cwd: targetProjectRoot,
+        existingPanes: panes,
+        sessionConfigPath: panesFile,
+        sessionProjectRoot: projectRoot,
+        projectRoot: targetProjectRoot,
+      })
       await savePanes([...panes, shellPane])
 
       setIsCreatingPane(false)
       setStatusMessage("Terminal pane created")
       setTimeout(() => setStatusMessage(""), STATUS_MESSAGE_DURATION_SHORT)
 
-      // Force a reload to ensure tmux metadata and pane IDs are in sync
       await loadPanes()
     } catch (error: any) {
       setIsCreatingPane(false)
@@ -213,17 +205,14 @@ export function useInputHandling(params: UseInputHandlingParams) {
       setIsCreatingPane(true)
       setStatusMessage("Creating root shell pane...")
 
-      const tmuxService = TmuxService.getInstance()
-      const newPaneId = await tmuxService.splitPane({ cwd: projectRoot })
-
-      await new Promise((resolve) => setTimeout(resolve, ANIMATION_DELAY))
-
-      const rootShellPane = await createRootShellPane(
-        newPaneId,
-        getNextDmuxId(panes),
-        panes
-      )
-      rootShellPane.projectRoot = projectRoot
+      const rootShellPane = await createShellPaneTmux({
+        cwd: projectRoot,
+        existingPanes: panes,
+        sessionConfigPath: panesFile,
+        sessionProjectRoot: projectRoot,
+        projectRoot,
+        isRootShell: true,
+      })
       await savePanes([...panes, rootShellPane])
 
       setIsCreatingPane(false)
@@ -251,23 +240,18 @@ export function useInputHandling(params: UseInputHandlingParams) {
       setIsCreatingPane(true)
       setStatusMessage(`Opening terminal in ${selectedPane.slug}...`)
 
-      const tmuxService = TmuxService.getInstance()
-      const newPaneId = await tmuxService.splitPane({ cwd: selectedPane.worktreePath })
-
-      // Wait for pane creation to settle
-      await new Promise((resolve) => setTimeout(resolve, ANIMATION_DELAY))
-
-      const shellPane = await createShellPane(
-        newPaneId,
-        getNextDmuxId(panes)
-      )
-      shellPane.projectRoot = targetProjectRoot
+      const shellPane = await createShellPaneTmux({
+        cwd: selectedPane.worktreePath,
+        existingPanes: panes,
+        sessionConfigPath: panesFile,
+        sessionProjectRoot: projectRoot,
+        projectRoot: targetProjectRoot,
+      })
       await savePanes([...panes, shellPane])
 
       setStatusMessage(`Opened terminal in ${selectedPane.slug}`)
       setTimeout(() => setStatusMessage(""), STATUS_MESSAGE_DURATION_SHORT)
 
-      // Force a reload to ensure tmux metadata and pane IDs are in sync
       await loadPanes()
     } catch (error: any) {
       setStatusMessage(`Failed to open terminal in worktree: ${error.message}`)

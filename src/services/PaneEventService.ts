@@ -86,6 +86,11 @@ export class PaneEventService extends EventEmitter {
       const hooksAvailable = await this.hookManager.areHooksInstalled();
 
       if (hooksAvailable || await this.hookManager.installHooks()) {
+        // Always ensure keybinding is installed (hooks may persist across sessions
+        // but the keybinding references a specific pane ID that changes)
+        if (hooksAvailable) {
+          await this.hookManager.ensureKeybinding();
+        }
         this.mode = 'hooks';
         this.startHookMode();
         this.logger.info('Pane events: Using tmux hooks (low CPU)', 'paneEvents');

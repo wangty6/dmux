@@ -69,6 +69,240 @@ async function waitForPaneReady(
   }
 }
 
+export interface CreateTmuxPaneOptions {
+  cwd: string;
+  existingPanes: DmuxPane[];
+  sessionConfigPath?: string;
+  sessionProjectRoot?: string;
+  maxPanesPerWindow?: number;
+}
+
+export interface CreateTmuxPaneResult {
+  paneId: string;
+  windowId?: string;
+  controlPaneId: string;
+  originalPaneId: string;
+  isFirstContentPane: boolean;
+  panesInTargetWindow: DmuxPane[];
+  configPath: string;
+}
+
+/**
+ * Creates a tmux pane with full infrastructure: config loading, control pane
+ * verification/self-healing, pane border setup, multi-window overflow handling,
+ * sidebar layout or split pane creation, and layout recalculation.
+ *
+ * Used by both agent pane creation (createPane) and shell pane creation (createShellPaneTmux).
+ */
+export async function createTmuxPane(options: CreateTmuxPaneOptions): Promise<CreateTmuxPaneResult> {
+  const {
+    cwd,
+    existingPanes,
+    sessionConfigPath,
+    sessionProjectRoot: optionsSessionProjectRoot,
+    maxPanesPerWindow,
+  } = options;
+
+  const sessionProjectRoot = optionsSessionProjectRoot
+    || (sessionConfigPath ? path.dirname(path.dirname(sessionConfigPath)) : cwd);
+
+  const tmuxService = TmuxService.getInstance();
+  const originalPaneId = tmuxService.getCurrentPaneIdSync();
+
+  // Load config to get control pane info and multi-window state
+  const configPath = sessionConfigPath
+    || path.join(sessionProjectRoot, '.dmux', 'dmux.config.json');
+  let controlPaneId: string | undefined;
+  let configWindows: import('../types.js').WindowInfo[] | undefined;
+
+  try {
+    const configContent = fs.readFileSync(configPath, 'utf-8');
+    const config: DmuxConfig = JSON.parse(configContent);
+    controlPaneId = config.controlPaneId;
+    configWindows = config.windows;
+
+    // Verify the control pane ID from config still exists
+    if (controlPaneId) {
+      const exists = await tmuxService.paneExists(controlPaneId);
+      if (!exists) {
+        LogService.getInstance().warn(
+          `Control pane ${controlPaneId} no longer exists, updating to ${originalPaneId}`,
+          'paneCreation'
+        );
+        controlPaneId = originalPaneId;
+        config.controlPaneId = controlPaneId;
+        config.controlPaneSize = SIDEBAR_WIDTH;
+        config.lastUpdated = new Date().toISOString();
+        atomicWriteJsonSync(configPath, config);
+      }
+    }
+
+    // If control pane ID is missing, save it
+    if (!controlPaneId) {
+      controlPaneId = originalPaneId;
+      config.controlPaneId = controlPaneId;
+      config.controlPaneSize = SIDEBAR_WIDTH;
+      config.lastUpdated = new Date().toISOString();
+      atomicWriteJsonSync(configPath, config);
+    }
+  } catch (error) {
+    // Fallback if config loading fails
+    controlPaneId = originalPaneId;
+  }
+
+  // Enable pane borders to show titles
+  try {
+    tmuxService.setGlobalOptionSync('pane-border-status', 'top');
+  } catch {
+    // Ignore if already set or fails
+  }
+
+  // Multi-window overflow: determine which window this pane goes into
+  const mainWindowId = tmuxService.getCurrentWindowIdSync();
+  let targetWindowId: string | undefined = mainWindowId;
+  let targetControlPaneId = controlPaneId;
+
+  if (maxPanesPerWindow && maxPanesPerWindow > 0) {
+    const windowManager = WindowManager.getInstance();
+
+    const target = windowManager.getTargetWindow(
+      existingPanes,
+      configWindows,
+      maxPanesPerWindow,
+      controlPaneId,
+      mainWindowId,
+    );
+
+    if (target.needsNewWindow) {
+      // All windows are full — create a new one
+      const nextIndex = (configWindows?.length ?? 1);
+      const tmuxSessionName = execSync(
+        "tmux display-message -p '#{session_name}'",
+        { encoding: 'utf-8', stdio: 'pipe' }
+      ).trim();
+      const newWindow = await windowManager.createNewWindow(
+        tmuxSessionName,
+        sessionProjectRoot,
+        nextIndex,
+      );
+
+      targetWindowId = newWindow.windowId;
+      targetControlPaneId = newWindow.controlPaneId;
+
+      // Save the new window to config
+      try {
+        const configContent = fs.readFileSync(configPath, 'utf-8');
+        const config: DmuxConfig = JSON.parse(configContent);
+
+        if (!config.windows || config.windows.length === 0) {
+          config.windows = [{
+            windowId: mainWindowId,
+            controlPaneId: controlPaneId,
+            windowIndex: 0,
+          }];
+        }
+        config.windows.push(newWindow);
+        config.lastUpdated = new Date().toISOString();
+        atomicWriteJsonSync(configPath, config);
+        configWindows = config.windows;
+      } catch (configError) {
+        LogService.getInstance().error(
+          `Failed to save new window to config: ${configError}`,
+          'paneCreation'
+        );
+      }
+    } else {
+      targetWindowId = target.windowId;
+      targetControlPaneId = target.controlPaneId;
+    }
+  }
+
+  // Determine if this is the first content pane in the TARGET window
+  // Panes without windowId are treated as belonging to the main window
+  const panesInTargetWindow = existingPanes.filter(p =>
+    p.windowId === targetWindowId || (!p.windowId && targetWindowId === mainWindowId)
+  );
+  const isFirstContentPane = panesInTargetWindow.length === 0;
+
+  let paneInfo: string;
+
+  // Self-healing: Try to create pane, if it fails due to stale controlPaneId, fix and retry
+  try {
+    if (isFirstContentPane) {
+      paneInfo = setupSidebarLayout(targetControlPaneId, cwd);
+    } else {
+      const dmuxPaneIds = panesInTargetWindow.map(p => p.paneId);
+      const targetPane = dmuxPaneIds[dmuxPaneIds.length - 1];
+      paneInfo = splitPane({ targetPane, cwd });
+    }
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    if (errorMsg.includes("can't find pane")) {
+      LogService.getInstance().warn('Pane creation failed with stale control pane ID, self-healing', 'paneCreation');
+
+      const currentPaneId = originalPaneId;
+      LogService.getInstance().info(
+        `Updating controlPaneId from ${targetControlPaneId} to ${currentPaneId}`,
+        'paneCreation'
+      );
+
+      try {
+        const configContent = fs.readFileSync(configPath, 'utf-8');
+        const config: DmuxConfig = JSON.parse(configContent);
+        config.controlPaneId = currentPaneId;
+        config.lastUpdated = new Date().toISOString();
+        atomicWriteJsonSync(configPath, config);
+        targetControlPaneId = currentPaneId;
+        controlPaneId = currentPaneId;
+      } catch (configError) {
+        LogService.getInstance().error(
+          `Failed to update config after control pane recovery: ${configError}`,
+          'paneCreation'
+        );
+        throw error;
+      }
+
+      // Retry pane creation with corrected controlPaneId
+      if (isFirstContentPane) {
+        paneInfo = setupSidebarLayout(targetControlPaneId, cwd);
+      } else {
+        const dmuxPaneIds = panesInTargetWindow.map(p => p.paneId);
+        const targetPane = dmuxPaneIds[dmuxPaneIds.length - 1];
+        paneInfo = splitPane({ targetPane, cwd });
+      }
+    } else {
+      throw error;
+    }
+  }
+
+  await waitForPaneReady(tmuxService, paneInfo);
+
+  // Apply optimal layout using the layout manager (scoped to target window)
+  if (targetControlPaneId) {
+    const dimensions = getTerminalDimensions();
+    const allContentPaneIds = [...panesInTargetWindow.map(p => p.paneId), paneInfo];
+
+    await recalculateAndApplyLayout(
+      targetControlPaneId,
+      allContentPaneIds,
+      dimensions.width,
+      dimensions.height
+    );
+
+    await tmuxService.refreshClient();
+  }
+
+  return {
+    paneId: paneInfo,
+    windowId: targetWindowId,
+    controlPaneId: controlPaneId!,
+    originalPaneId,
+    isFirstContentPane,
+    panesInTargetWindow,
+    configPath,
+  };
+}
+
 /**
  * Core pane creation logic that can be used by both TUI and API
  * Returns the newly created pane and whether agent choice is needed
@@ -167,195 +401,24 @@ export async function createPane(
   const generatedSlug = slugBase || await generateSlug(prompt);
   const slug = appendSlugSuffix(generatedSlug, slugSuffix);
   const branchName = branchPrefix ? `${branchPrefix}${slug}` : slug;
-  const tmuxService = TmuxService.getInstance();
-
   const worktreePath = path.join(projectRoot, '.dmux', 'worktrees', slug);
-  const originalPaneId = tmuxService.getCurrentPaneIdSync();
 
-  // Load config to get control pane info and multi-window state
-  const configPath = optionsSessionConfigPath
-    || path.join(sessionProjectRoot, '.dmux', 'dmux.config.json');
-  let controlPaneId: string | undefined;
-  let configWindows: import('../types.js').WindowInfo[] | undefined;
-  let sessionName: string | undefined;
+  // Create tmux pane with full infrastructure (config, window overflow, layout)
+  const tmuxResult = await createTmuxPane({
+    cwd: projectRoot,
+    existingPanes,
+    sessionConfigPath: optionsSessionConfigPath,
+    sessionProjectRoot,
+    maxPanesPerWindow: settings.maxPanesPerWindow,
+  });
 
-  try {
-    const configContent = fs.readFileSync(configPath, 'utf-8');
-    const config: DmuxConfig = JSON.parse(configContent);
-    controlPaneId = config.controlPaneId;
-    configWindows = config.windows;
-    // Derive session name from config path (parent dir structure)
-    sessionName = config.projectName;
-
-    // Verify the control pane ID from config still exists
-    if (controlPaneId) {
-      const exists = await tmuxService.paneExists(controlPaneId);
-      if (!exists) {
-        // Pane doesn't exist anymore, use current pane and update config
-        LogService.getInstance().warn(
-          `Control pane ${controlPaneId} no longer exists, updating to ${originalPaneId}`,
-          'paneCreation'
-        );
-        controlPaneId = originalPaneId;
-        config.controlPaneId = controlPaneId;
-        config.controlPaneSize = SIDEBAR_WIDTH;
-        config.lastUpdated = new Date().toISOString();
-        atomicWriteJsonSync(configPath, config);
-      }
-      // Else: Pane exists, we can use it
-    }
-
-    // If control pane ID is missing, save it
-    if (!controlPaneId) {
-      controlPaneId = originalPaneId;
-      config.controlPaneId = controlPaneId;
-      config.controlPaneSize = SIDEBAR_WIDTH;
-      config.lastUpdated = new Date().toISOString();
-
-      atomicWriteJsonSync(configPath, config);
-    }
-  } catch (error) {
-    // Fallback if config loading fails
-    controlPaneId = originalPaneId;
-  }
-
-  // Enable pane borders to show titles
-  try {
-    tmuxService.setGlobalOptionSync('pane-border-status', 'top');
-  } catch {
-    // Ignore if already set or fails
-  }
-
-  // Multi-window overflow: determine which window this pane goes into
-  const maxPanesPerWindow = settings.maxPanesPerWindow;
-  let targetWindowId: string | undefined;
-  let targetControlPaneId = controlPaneId;
-
-  if (maxPanesPerWindow && maxPanesPerWindow > 0) {
-    const windowManager = WindowManager.getInstance();
-    const mainWindowId = tmuxService.getCurrentWindowIdSync();
-
-    const target = windowManager.getTargetWindow(
-      existingPanes,
-      configWindows,
-      maxPanesPerWindow,
-      controlPaneId,
-      mainWindowId,
-    );
-
-    if (target.needsNewWindow) {
-      // All windows are full — create a new one
-      const nextIndex = (configWindows?.length ?? 1);
-      // Get session name for window creation
-      const tmuxSessionName = execSync(
-        "tmux display-message -p '#{session_name}'",
-        { encoding: 'utf-8', stdio: 'pipe' }
-      ).trim();
-      const newWindow = await windowManager.createNewWindow(
-        tmuxSessionName,
-        sessionProjectRoot,
-        nextIndex,
-      );
-
-      targetWindowId = newWindow.windowId;
-      targetControlPaneId = newWindow.controlPaneId;
-
-      // Save the new window to config
-      try {
-        const configContent = fs.readFileSync(configPath, 'utf-8');
-        const config: DmuxConfig = JSON.parse(configContent);
-
-        // Initialize windows array if needed (include main window)
-        if (!config.windows || config.windows.length === 0) {
-          config.windows = [{
-            windowId: mainWindowId,
-            controlPaneId: controlPaneId,
-            windowIndex: 0,
-          }];
-        }
-        config.windows.push(newWindow);
-        config.lastUpdated = new Date().toISOString();
-        atomicWriteJsonSync(configPath, config);
-        configWindows = config.windows;
-      } catch (configError) {
-        LogService.getInstance().error(
-          `Failed to save new window to config: ${configError}`,
-          'paneCreation'
-        );
-      }
-    } else {
-      targetWindowId = target.windowId;
-      targetControlPaneId = target.controlPaneId;
-    }
-  }
-
-  // Determine if this is the first content pane in the TARGET window
-  const panesInTargetWindow = targetWindowId
-    ? existingPanes.filter(p => p.windowId === targetWindowId || (!p.windowId && !targetWindowId))
-    : existingPanes;
-  const isFirstContentPane = panesInTargetWindow.length === 0;
-
-  let paneInfo: string;
-
-  // Self-healing: Try to create pane, if it fails due to stale controlPaneId, fix and retry
-  try {
-    if (isFirstContentPane) {
-      // First, create the tmux pane but DON'T destroy welcome pane yet
-      // This way we can save the pane to config first, THEN destroy welcome pane
-      paneInfo = setupSidebarLayout(targetControlPaneId, projectRoot);
-    } else {
-      // Subsequent panes - always split horizontally, let layout manager organize
-      // Get actual dmux pane IDs (not welcome pane) from panes in the target window
-      const dmuxPaneIds = panesInTargetWindow.map(p => p.paneId);
-      const targetPane = dmuxPaneIds[dmuxPaneIds.length - 1]; // Split from the most recent dmux pane
-
-      // Always split horizontally - the layout manager will organize panes optimally
-      paneInfo = splitPane({ targetPane, cwd: projectRoot });
-    }
-  } catch (error) {
-    // Check if error is due to stale pane ID (can't find pane)
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    if (errorMsg.includes("can't find pane")) {
-      LogService.getInstance().warn('Pane creation failed with stale control pane ID, self-healing', 'paneCreation');
-
-      // Fix: Update controlPaneId to current pane and save to config
-      const currentPaneId = originalPaneId; // We got this at the start of createPane
-      LogService.getInstance().info(
-        `Updating controlPaneId from ${targetControlPaneId} to ${currentPaneId}`,
-        'paneCreation'
-      );
-
-      try {
-        const configContent = fs.readFileSync(configPath, 'utf-8');
-        const config: DmuxConfig = JSON.parse(configContent);
-        config.controlPaneId = currentPaneId;
-        config.lastUpdated = new Date().toISOString();
-        atomicWriteJsonSync(configPath, config);
-        targetControlPaneId = currentPaneId; // Update local variable
-        controlPaneId = currentPaneId;
-      } catch (configError) {
-        LogService.getInstance().error(
-          `Failed to update config after control pane recovery: ${configError}`,
-          'paneCreation'
-        );
-        throw error; // Re-throw original error
-      }
-
-      // Retry pane creation with corrected controlPaneId
-      if (isFirstContentPane) {
-        paneInfo = setupSidebarLayout(targetControlPaneId, projectRoot);
-      } else {
-        const dmuxPaneIds = panesInTargetWindow.map(p => p.paneId);
-        const targetPane = dmuxPaneIds[dmuxPaneIds.length - 1];
-        paneInfo = splitPane({ targetPane, cwd: projectRoot });
-      }
-    } else {
-      // Different error, re-throw
-      throw error;
-    }
-  }
-
-  await waitForPaneReady(tmuxService, paneInfo);
+  const paneInfo = tmuxResult.paneId;
+  const targetWindowId = tmuxResult.windowId;
+  const panesInTargetWindow = tmuxResult.panesInTargetWindow;
+  const isFirstContentPane = tmuxResult.isFirstContentPane;
+  const configPath = tmuxResult.configPath;
+  const originalPaneId = tmuxResult.originalPaneId;
+  const tmuxService = TmuxService.getInstance();
 
   // Set pane title (project-tagged for collision-safe rebinding across projects)
   try {
@@ -365,22 +428,6 @@ export async function createPane(
     await tmuxService.setPaneTitle(paneInfo, paneTitle);
   } catch {
     // Ignore if setting title fails
-  }
-
-  // Apply optimal layout using the layout manager (scoped to target window)
-  if (targetControlPaneId) {
-    const dimensions = getTerminalDimensions();
-    const allContentPaneIds = [...panesInTargetWindow.map(p => p.paneId), paneInfo];
-
-    await recalculateAndApplyLayout(
-      targetControlPaneId,
-      allContentPaneIds,
-      dimensions.width,
-      dimensions.height
-    );
-
-    // Refresh tmux to apply changes
-    await tmuxService.refreshClient();
   }
 
   // Trigger pane_created hook (after pane created, before worktree)
@@ -644,6 +691,88 @@ export async function createPane(
     pane: newPane,
     needsAgentChoice: false,
   };
+}
+
+/**
+ * Creates a shell pane using the full tmux infrastructure (config, window overflow,
+ * layout recalculation, welcome pane coordination).
+ */
+export async function createShellPaneTmux(options: {
+  cwd: string;
+  existingPanes: DmuxPane[];
+  sessionConfigPath?: string;
+  sessionProjectRoot: string;
+  projectRoot: string;
+  isRootShell?: boolean;
+}): Promise<DmuxPane> {
+  const { SettingsManager } = await import('./settingsManager.js');
+  const settingsManager = new SettingsManager(options.sessionProjectRoot);
+  const settings = settingsManager.getSettings();
+
+  const tmuxResult = await createTmuxPane({
+    cwd: options.cwd,
+    existingPanes: options.existingPanes,
+    sessionConfigPath: options.sessionConfigPath,
+    sessionProjectRoot: options.sessionProjectRoot,
+    maxPanesPerWindow: settings.maxPanesPerWindow,
+  });
+
+  // Create shell pane metadata
+  const {
+    createShellPane: createShellPaneMeta,
+    createRootShellPane: createRootShellPaneMeta,
+    getNextDmuxId,
+  } = await import('./shellPaneDetection.js');
+
+  let shellPane: DmuxPane;
+  if (options.isRootShell) {
+    shellPane = await createRootShellPaneMeta(
+      tmuxResult.paneId,
+      getNextDmuxId(options.existingPanes),
+      options.existingPanes,
+    );
+  } else {
+    shellPane = await createShellPaneMeta(
+      tmuxResult.paneId,
+      getNextDmuxId(options.existingPanes),
+    );
+  }
+
+  shellPane.projectRoot = options.projectRoot;
+  shellPane.windowId = tmuxResult.windowId;
+
+  // Handle welcome pane destruction if first content pane
+  if (tmuxResult.isFirstContentPane) {
+    try {
+      const configContent = fs.readFileSync(tmuxResult.configPath, 'utf-8');
+      const config: DmuxConfig = JSON.parse(configContent);
+      config.panes = [...options.existingPanes, shellPane];
+      config.lastUpdated = new Date().toISOString();
+      atomicWriteJsonSync(tmuxResult.configPath, config);
+
+      const { destroyWelcomePaneCoordinated } = await import('./welcomePaneManager.js');
+      destroyWelcomePaneCoordinated(options.sessionProjectRoot);
+    } catch {
+      // Log but don't fail - welcome pane cleanup is not critical
+    }
+  }
+
+  // Update window name
+  if (tmuxResult.windowId) {
+    const allPanesInWindow = [...tmuxResult.panesInTargetWindow, shellPane];
+    await WindowManager.getInstance().updateWindowName(tmuxResult.windowId, allPanesInWindow);
+  }
+
+  // Restore focus to sidebar
+  const tmuxService = TmuxService.getInstance();
+  await tmuxService.selectPane(tmuxResult.originalPaneId);
+  try {
+    await tmuxService.setPaneTitle(tmuxResult.originalPaneId, "dmux");
+  } catch {
+    // Ignore if setting title fails
+  }
+
+  return shellPane;
 }
 
 /**

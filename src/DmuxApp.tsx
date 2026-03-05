@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react"
 import { Box, Text, useApp, useStdout, useInput } from "ink"
+import { execSync } from "child_process"
 import { TmuxService } from "./services/TmuxService.js"
 
 // Hooks
@@ -743,37 +744,17 @@ const DmuxApp: React.FC<DmuxAppProps> = ({
 
   // clearScreen function removed - no longer used (was only used by removed jumpToPane function)
 
-  // Cleanup function for exit
+  // Cleanup function for exit — detaches from the tmux session so it can be re-attached.
+  // The TUI keeps running in the control pane; only the outer terminal detaches.
   const cleanExit = () => {
-    // Clear screen before exiting Ink
-    process.stdout.write("\x1b[2J\x1b[3J\x1b[H")
-
-    // Exit the Ink app (this cleans up the React tree)
-    exit()
-
-    // Give Ink a moment to clean up its rendering, then do final cleanup
-    setTimeout(async () => {
-      // Multiple aggressive clearing strategies
-      process.stdout.write("\x1b[2J\x1b[H") // Clear screen and move cursor to home
-      process.stdout.write("\x1b[3J") // Clear scrollback buffer
-      process.stdout.write("\x1b[0m") // Reset all attributes
-
-      // Clear tmux history and pane
-      try {
-        const tmuxService = TmuxService.getInstance()
-        tmuxService.clearHistorySync()
-        await tmuxService.sendKeys("", "C-l")
-      } catch {}
-
-      // One more final clear
-      process.stdout.write("\x1b[2J\x1b[H")
-
-      // Show clean goodbye message
-      process.stdout.write("\n  Run dmux again to resume. Goodbye 👋\n\n")
-
-      // Exit process
-      process.exit(0)
-    }, 100)
+    try {
+      execSync('tmux detach-client', { stdio: 'pipe' })
+    } catch {
+      // Not in tmux or detach failed — fall back to actually exiting
+      process.stdout.write("\x1b[2J\x1b[3J\x1b[H")
+      exit()
+      setTimeout(() => process.exit(0), 100)
+    }
   }
 
   // Handle tmux hooks prompt input

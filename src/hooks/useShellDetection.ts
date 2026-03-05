@@ -60,7 +60,7 @@ export async function detectAndAddShellPanes(
     let nextId = getNextDmuxId(activePanes);
 
     for (const paneInfo of untrackedPanes) {
-      const shellPane = await createShellPane(paneInfo.paneId, nextId, paneInfo.title);
+      const shellPane = await createShellPane(paneInfo.paneId, nextId, paneInfo.title, paneInfo.windowId);
       newShellPanes.push(shellPane);
       nextId++;
     }
