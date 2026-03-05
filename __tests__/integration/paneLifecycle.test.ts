@@ -69,15 +69,20 @@ vi.mock('../../src/services/WorktreeCleanupService.js', () => ({
 }));
 
 // Mock fs for reading config
+const mockExistsSync = vi.fn((path: string) => {
+  // Worktree paths don't exist initially (created via tmux send-keys)
+  if (typeof path === 'string' && path.includes('.dmux/worktrees/')) return false;
+  return true;
+});
 vi.mock('fs', () => ({
   default: {
     readFileSync: vi.fn(() => JSON.stringify({ controlPaneId: '%0' })),
     writeFileSync: vi.fn(),
-    existsSync: vi.fn(() => true),
+    existsSync: mockExistsSync,
   },
   readFileSync: vi.fn(() => JSON.stringify({ controlPaneId: '%0' })),
   writeFileSync: vi.fn(),
-  existsSync: vi.fn(() => true),
+  existsSync: mockExistsSync,
 }));
 
 describe('Pane Lifecycle Integration Tests', () => {
@@ -88,6 +93,16 @@ describe('Pane Lifecycle Integration Tests', () => {
     // Reset all mocks
     vi.clearAllMocks();
     mockEnqueueCleanup.mockReset();
+
+    // Default: worktree paths exist after first check (simulates creation succeeding)
+    let worktreeChecks = 0;
+    mockExistsSync.mockImplementation((p: string) => {
+      if (typeof p === 'string' && p.includes('.dmux/worktrees/')) {
+        worktreeChecks++;
+        return worktreeChecks > 1;
+      }
+      return true;
+    });
 
     // Create fresh test environment
     tmuxSession = createMockTmuxSession('dmux-test', 1);
@@ -135,6 +150,16 @@ describe('Pane Lifecycle Integration Tests', () => {
       // Git symbolic-ref (main branch)
       if (cmd.includes('symbolic-ref')) {
         return returnValue('refs/heads/main');
+      }
+
+      // Git rev-parse --git-common-dir (detect worktree vs main repo)
+      if (cmd.includes('rev-parse') && cmd.includes('git-common-dir')) {
+        return returnValue('.git');
+      }
+
+      // Git rev-parse --show-toplevel (project root)
+      if (cmd.includes('rev-parse') && cmd.includes('show-toplevel')) {
+        return returnValue('/test');
       }
 
       // Git rev-parse (current branch)
@@ -191,11 +216,12 @@ describe('Pane Lifecycle Integration Tests', () => {
         ['claude']
       );
 
-      // Verify git worktree add was called
-      expect(mockExecSync).toHaveBeenCalledWith(
-        expect.stringContaining('git worktree add'),
-        expect.any(Object)
+      // Worktree creation is sent via tmux send-keys (not direct execSync)
+      const sendKeysCall = mockExecSync.mock.calls.find(([cmd]) =>
+        typeof cmd === 'string' && cmd.includes('send-keys') && cmd.includes('git worktree add')
       );
+      expect(sendKeysCall).toBeTruthy();
+      expect(sendKeysCall![0]).toContain('git worktree add');
     });
 
     it('should split tmux pane', async () => {
@@ -252,10 +278,12 @@ describe('Pane Lifecycle Integration Tests', () => {
       );
       expect(splitCall?.[0]).toContain('-c "/target/repo"');
 
+      // Worktree creation is sent via tmux send-keys
       const worktreeCall = mockExecSync.mock.calls.find(([cmd]) =>
-        typeof cmd === 'string' && cmd.includes('git worktree add')
+        typeof cmd === 'string' && cmd.includes('send-keys') && cmd.includes('git worktree add')
       );
-      expect(worktreeCall?.[0]).toContain('cd "/target/repo" && git worktree add "/target/repo/.dmux/worktrees/target-slug"');
+      expect(worktreeCall).toBeTruthy();
+      expect(worktreeCall![0]).toContain('cd "/target/repo" && git worktree add "/target/repo/.dmux/worktrees/target-slug"');
     });
 
     it('should handle slug generation failure (fallback to timestamp)', async () => {

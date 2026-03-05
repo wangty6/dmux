@@ -93,7 +93,7 @@ export async function attachAgentToWorktree(
 
   // Split from the last existing pane (standard grid placement)
   const dmuxPaneIds = existingPanes.map(p => p.paneId);
-  const splitTarget = dmuxPaneIds[dmuxPaneIds.length - 1];
+  const splitTarget = dmuxPaneIds[dmuxPaneIds.length - 1] || controlPaneId || originalPaneId;
   const paneInfo = splitPane({ targetPane: splitTarget, cwd: projectRoot });
 
   // Wait for pane to be ready
