@@ -64,7 +64,7 @@ export class PaneEventService extends EventEmitter {
    */
   async initialize(config: PaneEventConfig): Promise<void> {
     this.config = config;
-    this.hookManager.initialize(config.sessionName);
+    this.hookManager.initialize(config.sessionName, config.controlPaneId);
   }
 
   /**

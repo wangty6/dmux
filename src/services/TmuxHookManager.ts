@@ -45,6 +45,7 @@ export class TmuxHookManager extends EventEmitter {
   private static instance: TmuxHookManager;
   private logger = LogService.getInstance();
   private sessionName: string = '';
+  private controlPaneId: string = '';
   private pid: number = process.pid;
   private hooksInstalled = false;
   private signalHandlerSetup = false;
@@ -63,8 +64,9 @@ export class TmuxHookManager extends EventEmitter {
   /**
    * Initialize the hook manager with the current session
    */
-  initialize(sessionName: string): void {
+  initialize(sessionName: string, controlPaneId?: string): void {
     this.sessionName = sessionName;
+    if (controlPaneId) this.controlPaneId = controlPaneId;
     this.setupSignalHandler();
   }
 
@@ -193,6 +195,28 @@ export class TmuxHookManager extends EventEmitter {
         await execAsync(cmd, { timeout: 2000 });
       }
 
+      // Install keybinding: Ctrl+\ to jump back to control pane
+      // Uses a session user option (@dmux_control_pane) for indirection so:
+      // 1. The binding is session-scoped via if-shell session name check
+      // 2. The control pane ID stays current after recovery without rebinding
+      if (this.controlPaneId) {
+        try {
+          // Store control pane ID as a session option
+          await execAsync(
+            `tmux set-option -t '${this.sessionName}' @dmux_control_pane '${this.controlPaneId}'`,
+            { timeout: 2000 }
+          );
+          // Bind Ctrl+\ — only fires in the dmux session, resolves pane ID dynamically
+          await execAsync(
+            `tmux bind-key -n C-\\\\ if-shell -F '#{==:#S,${this.sessionName}}' 'run-shell "tmux select-pane -t \\$(tmux show-option -qv @dmux_control_pane)"'`,
+            { timeout: 2000 }
+          );
+          this.logger.info('Installed Ctrl+\\ keybinding to jump to control pane', 'hooks');
+        } catch {
+          this.logger.debug('Failed to install Ctrl+\\ keybinding', 'hooks');
+        }
+      }
+
       this.hooksInstalled = true;
       this.logger.info('Tmux hooks installed successfully', 'hooks');
       return true;
@@ -220,6 +244,13 @@ export class TmuxHookManager extends EventEmitter {
       await Promise.all(
         unsetCommands.map(cmd => execAsync(cmd, { silent: true, timeout: 2000 }).catch(() => {}))
       );
+
+      // Remove Ctrl+\ keybinding
+      try {
+        await execAsync(`tmux unbind-key -n C-\\\\`, { silent: true, timeout: 2000 });
+      } catch {
+        // Ignore - keybinding might not exist
+      }
 
       this.hooksInstalled = false;
       this.logger.info('Tmux hooks uninstalled', 'hooks');
@@ -266,11 +297,34 @@ export class TmuxHookManager extends EventEmitter {
   }
 
   /**
+   * Update the control pane ID (e.g., after control pane recovery)
+   */
+  async updateControlPaneId(newControlPaneId: string): Promise<void> {
+    this.controlPaneId = newControlPaneId;
+    if (this.sessionName) {
+      try {
+        await execAsync(
+          `tmux set-option -t '${this.sessionName}' @dmux_control_pane '${newControlPaneId}'`,
+          { timeout: 2000 }
+        );
+        this.logger.debug(`Updated @dmux_control_pane to ${newControlPaneId}`, 'hooks');
+      } catch {
+        this.logger.debug('Failed to update @dmux_control_pane option', 'hooks');
+      }
+    }
+  }
+
+  /**
    * Clean up on shutdown
    */
   async cleanup(): Promise<void> {
-    // Optionally uninstall hooks on shutdown
-    // For now, we leave them installed so they work across restarts
+    // Remove keybinding since it references a session-specific pane ID
+    try {
+      await execAsync(`tmux unbind-key -n C-\\\\`, { silent: true, timeout: 2000 });
+    } catch {
+      // Ignore - keybinding might not exist
+    }
+    // Hooks are left installed so they work across restarts
     this.removeAllListeners();
   }
 }

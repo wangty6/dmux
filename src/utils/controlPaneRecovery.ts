@@ -159,6 +159,7 @@ async function recoverControlPaneIfNeeded(): Promise<void> {
     config.controlPaneSize = SIDEBAR_WIDTH;
     config.lastUpdated = new Date().toISOString();
     await atomicWriteJson(configPath, config);
+    runTmux(['set-option', '-t', sessionName, '@dmux_control_pane', existingDmuxPane.paneId]);
     return;
   }
 
@@ -194,6 +195,9 @@ async function recoverControlPaneIfNeeded(): Promise<void> {
   const newControlPaneId = splitResult.stdout.trim();
   runTmux(['select-pane', '-t', newControlPaneId, '-T', 'dmux']);
   runTmux(['send-keys', '-t', newControlPaneId, `node "${resolveDistIndexPath()}"`, 'Enter']);
+
+  // Update the session option so Ctrl+\ keybinding resolves to the new control pane
+  runTmux(['set-option', '-t', sessionName, '@dmux_control_pane', newControlPaneId]);
 
   config.controlPaneId = newControlPaneId;
   config.controlPaneSize = SIDEBAR_WIDTH;

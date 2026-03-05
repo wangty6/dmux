@@ -57,6 +57,8 @@ const ShortcutsPopupApp: React.FC<ShortcutsPopupAppProps> = ({
     ...(hasSidebarLayout ? [{ key: 'L', description: 'Reset sidebar layout' }] : []),
     { key: 'q', description: 'Quit dmux' },
     { key: '↑↓←→', description: 'Navigate panes' },
+    { key: '1-9', description: 'Jump to pane by number' },
+    { key: 'Ctrl+\\', description: 'Jump to control pane' },
     { key: 'Enter', description: 'Select / open menu' },
     { key: 'Esc', description: 'Cancel / close' },
     { key: '?', description: 'Show this help' },
