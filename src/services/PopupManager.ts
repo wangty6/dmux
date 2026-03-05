@@ -177,6 +177,9 @@ export class PopupManager {
       // Wait for result
       const result = await popupHandle.resultPromise
 
+      // Suppress buffered keystrokes after popup close to prevent reopen loops
+      this.ignoreInputBriefly()
+
       // Clean up temp file
       if (tempFile) {
         try {
@@ -243,7 +246,6 @@ export class PopupManager {
         }
       )
 
-      this.ignoreInputBriefly()
       return this.handleResult(result)
     } catch (error: any) {
       this.showTempMessage(`Failed to launch popup: ${error.message}`)
@@ -426,8 +428,6 @@ export class PopupManager {
         logsData
       )
 
-      this.ignoreInputBriefly()
-
       if (result.success) {
         stateManager.markAllLogsAsRead()
 
@@ -461,7 +461,6 @@ export class PopupManager {
         }
       )
 
-      this.ignoreInputBriefly()
       const data = this.handleResult(result)
       return data?.action === "hooks" ? "hooks" : null
     } catch (error: any) {
@@ -717,7 +716,6 @@ export class PopupManager {
         { defaultValue: defaultValue || "" }
       )
 
-      this.ignoreInputBriefly()
       return this.handleResult(result)
     } catch (error: any) {
       this.showTempMessage(`Failed to launch popup: ${error.message}`)

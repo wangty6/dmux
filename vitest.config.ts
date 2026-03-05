@@ -1,10 +1,9 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
     exclude: [
-      '**/node_modules/**',
-      '**/dist/**',
+      ...configDefaults.exclude,
       '.dmux/worktrees/**',
     ],
     coverage: {
