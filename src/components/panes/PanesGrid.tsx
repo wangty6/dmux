@@ -78,24 +78,24 @@ const PanesGrid: React.FC<PanesGridProps> = memo(({
       const showHotkey = isActiveGroup
       if (kind === "new-agent") {
         return showHotkey
-          ? <Text color={color} bold={isSelected}><Text color="cyan">[n]</Text>ew agent</Text>
-          : <Text color={color} bold={isSelected}>new agent</Text>
+          ? <Text color={color} bold={isSelected}><Text color="cyan">[n]</Text> agent</Text>
+          : <Text color={color} bold={isSelected}>agent</Text>
       }
       return showHotkey
-        ? <Text color={color} bold={isSelected}><Text color="cyan">[t]</Text>erminal</Text>
+        ? <Text color={color} bold={isSelected}><Text color="cyan">[t]</Text> terminal</Text>
         : <Text color={color} bold={isSelected}>terminal</Text>
     }
 
-    const rootShellLabel = isActiveGroup
-      ? <Text color={COLORS.border}><Text color="cyan">[T]</Text> root shell</Text>
+    const rootLabels = isActiveGroup
+      ? <Text color={COLORS.border}><Text color="cyan">[N]</Text> agent@root  <Text color="cyan">[T]</Text> term@root</Text>
       : null
 
     return (
-      <Box width={40} justifyContent="flex-end">
+      <Box width={50} justifyContent="flex-end">
         {renderLabel("new-agent", newSelected)}
         <Text color={COLORS.border}>{"  "}</Text>
         {renderLabel("terminal", termSelected)}
-        {rootShellLabel && <><Text color={COLORS.border}>{"  "}</Text>{rootShellLabel}</>}
+        {rootLabels && <><Text color={COLORS.border}>{"  "}</Text>{rootLabels}</>}
       </Box>
     )
   }
