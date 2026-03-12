@@ -480,7 +480,7 @@ export const enforceControlPaneSize = async (
     }
     // logService.debug(`Terminal dimensions: ${dimensions.width}x${dimensions.height}`, 'Layout');
 
-    await recalculateAndApplyLayout(
+    const layoutChanged = await recalculateAndApplyLayout(
       controlPaneId,
       contentPanes,
       dimensions.width,
@@ -493,8 +493,10 @@ export const enforceControlPaneSize = async (
       }
     );
 
-    // Refresh to apply changes (but don't select the pane - don't steal focus!)
-    await tmuxService.refreshClient();
+    // Only refresh when layout actually changed to avoid triggering client-resized hook feedback loop
+    if (layoutChanged) {
+      await tmuxService.refreshClient();
+    }
   } catch (error) {
     // Log error for debugging but don't crash
     const msg = 'Layout enforcement failed';

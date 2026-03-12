@@ -18,6 +18,7 @@ export function useLayoutManagement({
 }: LayoutManagementOptions) {
   // Use refs to track state across resize events
   const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const resetTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isApplyingLayoutRef = useRef(false);
   // Track if component is still mounted to avoid state updates after unmount
   const isMountedRef = useRef(true);
@@ -79,12 +80,16 @@ export function useLayoutManagement({
               'ResizeDebug'
             );
           } finally {
-            // Reset flag after a brief delay (always reset, even on error)
-            setTimeout(() => {
+            // Reset flag after a delay that exceeds the debounce (500ms) to suppress
+            // any SIGUSR1 arriving from the client-resized hook triggered by refreshClient
+            if (resetTimeoutRef.current) {
+              clearTimeout(resetTimeoutRef.current);
+            }
+            resetTimeoutRef.current = setTimeout(() => {
               if (isMountedRef.current) {
                 isApplyingLayoutRef.current = false;
               }
-            }, 100);
+            }, 700);
           }
         }
       }, 500);
@@ -104,6 +109,9 @@ export function useLayoutManagement({
       process.off('SIGUSR1', handleResize);
       if (resizeTimeoutRef.current) {
         clearTimeout(resizeTimeoutRef.current);
+      }
+      if (resetTimeoutRef.current) {
+        clearTimeout(resetTimeoutRef.current);
       }
     };
   }, [controlPaneId, hasActiveDialog]);

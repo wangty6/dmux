@@ -82,6 +82,7 @@ export class PopupManager {
   private config: PopupManagerConfig
   private setStatusMessage: (msg: string) => void
   private setIgnoreInput: (ignore: boolean) => void
+  private logWindowId: string | null = null
 
   constructor(
     config: PopupManagerConfig,
@@ -408,37 +409,59 @@ export class PopupManager {
   }
 
   async launchLogsPopup(): Promise<void> {
-    if (!this.checkPopupSupport()) return
+    const tmux = TmuxService.getInstance()
+
+    // If log window already exists, just switch to it
+    if (this.logWindowId) {
+      try {
+        await tmux.selectWindow(this.logWindowId)
+        return
+      } catch {
+        this.logWindowId = null
+      }
+    }
+
+    let tempFile: string | null = null
+    let resultFile: string | null = null
 
     try {
       const stateManager = StateManager.getInstance()
       const logsData = {
         logs: stateManager.getLogs(),
         stats: stateManager.getLogStats(),
-        panes: stateManager.getPanes(), // Include panes for slug lookup
+        panes: stateManager.getPanes(),
       }
 
-      const result = await this.launchPopup<{ clearLogs?: boolean }>(
-        "logsPopup.js",
-        [],
-        {
-          title: "🪵 dmux Logs",
-          positioning: "large",
-        },
-        logsData
-      )
+      // Write temp data file
+      tempFile = `/tmp/dmux-logsPopup-${Date.now()}.json`
+      await fs.writeFile(tempFile, JSON.stringify(logsData))
 
-      if (result.success) {
-        stateManager.markAllLogsAsRead()
+      // Result file for logsPopup.tsx exit handling compatibility
+      resultFile = `/tmp/dmux-logs-result-${Date.now()}.json`
 
-        // Check if user requested to clear logs
-        if (result.data?.clearLogs) {
-          LogService.getInstance().clearAll()
-          this.showTempMessage('✓ Logs cleared', 2000)
-        }
-      }
+      const scriptPath = this.getPopupScriptPath("logsPopup.js")
+
+      // Create a new tmux window running the log viewer
+      const windowId = await tmux.newWindow({ name: "dmux-logs", detached: true })
+
+      // Run the log viewer; when it exits, clean up temp files and self-destruct
+      const cmd = `node '${scriptPath}' '${resultFile}' '${tempFile}'; rm -f '${tempFile}' '${resultFile}'; tmux kill-window -t '${windowId}' 2>/dev/null; exit`
+      await tmux.sendShellCommand(windowId, cmd)
+      await tmux.sendTmuxKeys(windowId, "Enter")
+
+      // Only cache window ID after all commands succeed
+      this.logWindowId = windowId
+
+      // Switch to the log window
+      await tmux.selectWindow(windowId)
+
+      // Mark logs as read
+      stateManager.markAllLogsAsRead()
     } catch (error: any) {
-      this.showTempMessage(`Failed to launch popup: ${error.message}`)
+      this.logWindowId = null
+      if (tempFile) await fs.unlink(tempFile).catch(() => {})
+      if (resultFile) await fs.unlink(resultFile).catch(() => {})
+      this.showTempMessage(`Failed to launch log viewer: ${error.message}`)
     }
   }
 

@@ -43,7 +43,7 @@ export async function handleLastPaneRemoved(projectRoot: string): Promise<void> 
     const { recalculateAndApplyLayout } = await import('./layoutManager.js');
     const dimensions = await tmuxService.getTerminalDimensions();
 
-    recalculateAndApplyLayout(
+    await recalculateAndApplyLayout(
       controlPaneId,
       [], // No content panes
       dimensions.width,

@@ -128,7 +128,7 @@ export async function recalculateAndApplyLayout(
   terminalHeight: number,
   config?: LayoutConfig,
   options?: { force?: boolean; suppressLogs?: boolean; disableSpacer?: boolean }
-): Promise<void> {
+): Promise<boolean> {
   // Wrap entire function in try-catch to prevent crashes during resize
   try {
     const suppressLogs = options?.suppressLogs === true;
@@ -138,7 +138,7 @@ export async function recalculateAndApplyLayout(
       if (!suppressLogs) {
         LogService.getInstance().warn('Invalid controlPaneId, skipping layout', 'Layout');
       }
-      return;
+      return false;
     }
     if (terminalWidth <= 0 || terminalHeight <= 0) {
       if (!suppressLogs) {
@@ -147,7 +147,7 @@ export async function recalculateAndApplyLayout(
           'Layout'
         );
       }
-      return;
+      return false;
     }
 
     const effectiveConfig = resolveLayoutConfig(config);
@@ -205,7 +205,7 @@ export async function recalculateAndApplyLayout(
 
     if (dimensionsUnchanged && !forceLayout) {
       // Layout unchanged - skip ALL layout operations to prevent Ink redraw.
-      return;
+      return false;
     }
 
     if (!suppressLogs) {
@@ -479,7 +479,7 @@ export async function recalculateAndApplyLayout(
           'Layout'
         );
       }
-      return;
+      return false;
     }
 
     // Also verify control pane still exists
@@ -490,7 +490,7 @@ export async function recalculateAndApplyLayout(
           'Layout'
         );
       }
-      return;
+      return false;
     }
 
     layoutApplier.applyPaneLayout(actualControlPaneId, validFinalPanes, finalLayout, terminalHeight);
@@ -500,6 +500,7 @@ export async function recalculateAndApplyLayout(
     }
     layoutApplier.applyPaneLayout(actualControlPaneId, finalContentPanes, finalLayout, terminalHeight);
   }
+  return true;
   } catch (error) {
     // Catch-all for any errors during layout recalculation
     // Log but don't crash - layout will be retried on next resize event
@@ -509,6 +510,7 @@ export async function recalculateAndApplyLayout(
       undefined,
       error instanceof Error ? error : undefined
     );
+    return false;
   }
 }
 

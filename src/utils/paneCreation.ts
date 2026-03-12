@@ -282,14 +282,16 @@ export async function createTmuxPane(options: CreateTmuxPaneOptions): Promise<Cr
     const dimensions = getTerminalDimensions();
     const allContentPaneIds = [...panesInTargetWindow.map(p => p.paneId), paneInfo];
 
-    await recalculateAndApplyLayout(
+    const layoutChanged = await recalculateAndApplyLayout(
       targetControlPaneId,
       allContentPaneIds,
       dimensions.width,
       dimensions.height
     );
 
-    await tmuxService.refreshClient();
+    if (layoutChanged) {
+      await tmuxService.refreshClient();
+    }
   }
 
   return {

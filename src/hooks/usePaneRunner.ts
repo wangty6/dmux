@@ -1,9 +1,18 @@
 import { execSync } from 'child_process';
 import fs from 'fs/promises';
+import { open, type FileHandle } from 'fs/promises';
 import type { DmuxPane, ProjectSettings } from '../types.js';
 import { TmuxService } from '../services/TmuxService.js';
 import { enforceControlPaneSize } from '../utils/tmux.js';
 import { SIDEBAR_WIDTH } from '../utils/layoutManager.js';
+
+const WINDOW_SIZE = 100_000; // 100KB sliding window for regex matching
+
+interface MonitorState {
+  handle?: FileHandle;
+  position: number;
+  window: string;
+}
 
 interface Params {
   panes: DmuxPane[];
@@ -71,8 +80,9 @@ export default function usePaneRunner({ panes, savePanes, projectSettings, setSt
       const updatedPanes = panes.map(p => p.id === pane.id ? updatedPane : p);
       await savePanes(updatedPanes);
 
-      if (type === 'test') setTimeout(() => monitorTestOutput(pane.id, logFile), 2000);
-      else setTimeout(() => monitorDevOutput(pane.id, logFile), 2000);
+      const state: MonitorState = { position: 0, window: '' };
+      if (type === 'test') setTimeout(() => monitorTestOutput(pane.id, logFile, state), 2000);
+      else setTimeout(() => monitorDevOutput(pane.id, logFile, state), 2000);
 
       setRunningCommand(false);
       setStatusMessage(`${type === 'test' ? 'Test' : 'Dev server'} started in background`);
@@ -84,13 +94,25 @@ export default function usePaneRunner({ panes, savePanes, projectSettings, setSt
     }
   };
 
-  const monitorTestOutput = async (paneId: string, logFile: string) => {
+  const monitorTestOutput = async (paneId: string, logFile: string, state: MonitorState) => {
     try {
-      const content = await fs.readFile(logFile, 'utf-8');
+      if (!state.handle) {
+        state.handle = await open(logFile, 'r');
+      }
+      const buf = Buffer.alloc(65536);
+      const { bytesRead } = await state.handle.read(buf, 0, buf.length, state.position);
+      if (bytesRead > 0) {
+        state.position += bytesRead;
+        state.window += buf.toString('utf-8', 0, bytesRead);
+        if (state.window.length > WINDOW_SIZE) {
+          state.window = state.window.slice(-WINDOW_SIZE);
+        }
+      }
+
       let status: 'passed' | 'failed' | 'running' = 'running';
-      if (content.match(/(?:tests?|specs?) (?:passed|✓|succeeded)/i) || content.match(/\b0 fail(?:ing|ed|ures?)\b/i)) {
+      if (state.window.match(/(?:tests?|specs?) (?:passed|✓|succeeded)/i) || state.window.match(/\b0 fail(?:ing|ed|ures?)\b/i)) {
         status = 'passed';
-      } else if (content.match(/(?:tests?|specs?) (?:failed|✗|✖)/i) || content.match(/\d+ fail(?:ing|ed|ures?)/i) || content.match(/error:/i)) {
+      } else if (state.window.match(/(?:tests?|specs?) (?:failed|✗|✖)/i) || state.window.match(/\d+ fail(?:ing|ed|ures?)/i) || state.window.match(/error:/i)) {
         status = 'failed';
       }
 
@@ -107,16 +129,38 @@ export default function usePaneRunner({ panes, savePanes, projectSettings, setSt
         }
       }
 
-      const updatedPanes = panes.map(p => p.id === paneId ? { ...p, testStatus: status, testOutput: content.slice(-5000) } : p);
+      const updatedPanes = panes.map(p => p.id === paneId ? { ...p, testStatus: status, testOutput: state.window.slice(-5000) } : p);
       await savePanes(updatedPanes);
-      if (status === 'running') setTimeout(() => monitorTestOutput(paneId, logFile), 2000);
-    } catch {}
+      if (status === 'running') {
+        setTimeout(() => monitorTestOutput(paneId, logFile, state), 2000);
+      } else {
+        await state.handle.close();
+        state.handle = undefined;
+      }
+    } catch {
+      if (state.handle) {
+        try { await state.handle.close(); } catch {}
+        state.handle = undefined;
+      }
+    }
   };
 
-  const monitorDevOutput = async (paneId: string, logFile: string) => {
+  const monitorDevOutput = async (paneId: string, logFile: string, state: MonitorState) => {
     try {
-      const content = await fs.readFile(logFile, 'utf-8');
-      const urlMatch = content.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d+/i) || content.match(/Local:\s+(https?:\/\/[^\s]+)/i) || content.match(/listening on port (\d+)/i);
+      if (!state.handle) {
+        state.handle = await open(logFile, 'r');
+      }
+      const buf = Buffer.alloc(65536);
+      const { bytesRead } = await state.handle.read(buf, 0, buf.length, state.position);
+      if (bytesRead > 0) {
+        state.position += bytesRead;
+        state.window += buf.toString('utf-8', 0, bytesRead);
+        if (state.window.length > WINDOW_SIZE) {
+          state.window = state.window.slice(-WINDOW_SIZE);
+        }
+      }
+
+      const urlMatch = state.window.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d+/i) || state.window.match(/Local:\s+(https?:\/\/[^\s]+)/i) || state.window.match(/listening on port (\d+)/i);
       let devUrl = '';
       if (urlMatch) {
         if (urlMatch[0].startsWith('http')) devUrl = urlMatch[0];
@@ -129,8 +173,18 @@ export default function usePaneRunner({ panes, savePanes, projectSettings, setSt
       }
       const updatedPanes = panes.map(p => p.id === paneId ? { ...p, devStatus: status, devUrl: devUrl || p.devUrl } : p);
       await savePanes(updatedPanes);
-      if (status === 'running') setTimeout(() => monitorDevOutput(paneId, logFile), 2000);
-    } catch {}
+      if (status === 'running') {
+        setTimeout(() => monitorDevOutput(paneId, logFile, state), 2000);
+      } else {
+        await state.handle.close();
+        state.handle = undefined;
+      }
+    } catch {
+      if (state.handle) {
+        try { await state.handle.close(); } catch {}
+        state.handle = undefined;
+      }
+    }
   };
 
   const attachBackgroundWindow = async (pane: DmuxPane, type: 'test' | 'dev') => {

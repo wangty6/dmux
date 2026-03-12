@@ -40,20 +40,16 @@ export default function usePaneCreation({
   const openInEditor = async (currentPrompt: string, setPrompt: (v: string) => void) => {
     try {
       const fs = await import('fs');
+      const { spawnSync } = await import('child_process');
       const tmpFile = path.join(os.tmpdir(), `dmux-prompt-${Date.now()}.md`);
       fs.writeFileSync(tmpFile, currentPrompt || '# Enter your Claude prompt here\n\n');
       const editor = process.env.EDITOR || process.env.VISUAL || 'nano';
       process.stdout.write('\x1b[2J\x1b[H');
-      const { spawn } = await import('child_process');
-      const editorProcess = spawn(editor, [tmpFile], { stdio: 'inherit', shell: true });
-      editorProcess.on('close', () => {
-        try {
-          const content = fs.readFileSync(tmpFile, 'utf8').replace(/^# Enter your Claude prompt here\s*\n*/m, '').trim();
-          setPrompt(content);
-          fs.unlinkSync(tmpFile);
-          process.stdout.write('\x1b[2J\x1b[H');
-        } catch {}
-      });
+      spawnSync(editor, [tmpFile], { stdio: 'inherit', shell: true });
+      process.stdout.write('\x1b[2J\x1b[H');
+      const content = fs.readFileSync(tmpFile, 'utf8').replace(/^# Enter your Claude prompt here\s*\n*/m, '').trim();
+      setPrompt(content);
+      fs.unlinkSync(tmpFile);
     } catch {}
   };
 

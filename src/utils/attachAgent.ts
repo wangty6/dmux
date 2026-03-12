@@ -118,13 +118,15 @@ export async function attachAgentToWorktree(
   if (controlPaneId) {
     const dimensions = getTerminalDimensions();
     const allContentPaneIds = [...existingPanes.map(p => p.paneId), paneInfo];
-    await recalculateAndApplyLayout(
+    const layoutChanged = await recalculateAndApplyLayout(
       controlPaneId,
       allContentPaneIds,
       dimensions.width,
       dimensions.height,
     );
-    await tmuxService.refreshClient();
+    if (layoutChanged) {
+      await tmuxService.refreshClient();
+    }
   }
 
   // cd into the existing worktree (no git worktree add)

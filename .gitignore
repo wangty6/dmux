@@ -12,3 +12,6 @@ frontend/dist
 frontend/node_modules
 .archive/
 src/utils/generated-agents-doc.ts
+
+# Second Opinion reviews
+.claude/reviews/

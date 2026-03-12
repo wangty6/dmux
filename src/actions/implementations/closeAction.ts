@@ -288,7 +288,7 @@ async function executeCloseOption(
               const { getTerminalDimensions } = await import('../../utils/tmux.js');
               const dimensions = getTerminalDimensions();
 
-              recalculateAndApplyLayout(
+              await recalculateAndApplyLayout(
                 config.controlPaneId,
                 validPaneIds,
                 dimensions.width,
