@@ -181,11 +181,12 @@ export function completeMerge(repoPath: string, message?: string): MergeResult {
       // Staged changes exist — proceed
     }
 
-    // Complete the merge
+    // Complete the merge — use -F - to avoid shell escaping issues
     const commitMsg = message || 'Merge branch with resolved conflicts';
-    execSync(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, {
+    execSync('git commit -F -', {
       cwd: repoPath,
-      stdio: 'pipe',
+      input: commitMsg,
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
 
     return { success: true };

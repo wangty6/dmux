@@ -316,20 +316,22 @@ export function commitChanges(
   }
 
   try {
-    execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, {
+    // Use -F - (read message from stdin) to avoid shell escaping issues
+    // with newlines, $, backticks, etc. in AI-generated commit messages
+    execSync('git commit -F -', {
       cwd: repoPath,
-      stdio: 'pipe',
+      input: message,
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
 
     LogService.getInstance().info(`Commit successful in: ${repoPath}`, 'commitChanges');
     return { success: true };
   } catch (error: unknown) {
-    // Try to get more detailed error info
+    // Try to get more detailed error info from stderr and stdout
     let errorMessage = 'Unknown error';
     if (error instanceof Error) {
       errorMessage = error.message;
-      // execSync errors have stderr in the error object
-      const execError = error as Error & { stderr?: Buffer | string };
+      const execError = error as Error & { stderr?: Buffer | string; stdout?: Buffer | string };
       if (execError.stderr) {
         const stderr = typeof execError.stderr === 'string'
           ? execError.stderr
@@ -338,8 +340,18 @@ export function commitChanges(
           errorMessage = stderr.trim();
         }
       }
+      // Also check stdout — git puts "nothing to commit" on stdout, not stderr
+      if (execError.stdout) {
+        const stdout = typeof execError.stdout === 'string'
+          ? execError.stdout
+          : execError.stdout.toString();
+        if (stdout.includes('nothing to commit') || stdout.includes('nothing added to commit')) {
+          LogService.getInstance().info(`Nothing to commit in ${repoPath} (likely submodule-only changes), treating as success`, 'commitChanges');
+          return { success: true };
+        }
+      }
     }
-    // "nothing to commit" is not a real failure — submodule dirt or race condition
+    // Also check error.message for "nothing to commit" (belt and suspenders)
     if (errorMessage.includes('nothing to commit') || errorMessage.includes('nothing added to commit')) {
       LogService.getInstance().info(`Nothing to commit in ${repoPath} (likely submodule-only changes), treating as success`, 'commitChanges');
       return { success: true };

@@ -63,12 +63,14 @@ export default function MergePane({ pane, onComplete, onCancel, mainBranch }: Me
     }]);
   };
 
-  const runCommand = (command: string, cwd?: string): { success: boolean; output: string; error?: string } => {
+  const runCommand = (command: string, cwd?: string, stdinInput?: string): { success: boolean; output: string; error?: string } => {
     try {
       const output = execSync(command, {
         cwd: cwd || pane.worktreePath,
         encoding: 'utf8',
-        stdio: 'pipe'
+        ...(stdinInput !== undefined
+          ? { input: stdinInput, stdio: ['pipe', 'pipe', 'pipe'] }
+          : { stdio: 'pipe' }),
       });
       addCommandOutput(command, output);
       return { success: true, output };
@@ -161,7 +163,7 @@ export default function MergePane({ pane, onComplete, onCancel, mainBranch }: Me
       const stagedCheck = runCommand('git diff --cached --quiet --ignore-submodules=dirty');
       if (!stagedCheck.success) {
         // Exit code 1 = there ARE staged changes, commit them
-        const commitResult = runCommand(`git commit -m "${finalMessage}"`);
+        const commitResult = runCommand(`git commit -F -`, undefined, finalMessage);
         if (!commitResult.success) {
           setError('Failed to commit changes');
           setStatus('error');
