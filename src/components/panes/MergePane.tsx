@@ -148,7 +148,7 @@ export default function MergePane({ pane, onComplete, onCancel, mainBranch }: Me
     setStatus('checking');
 
     // Step 1: Check for uncommitted changes in the worktree
-    const statusResult = runCommand('git status --porcelain --ignore-submodules=dirty');
+    const statusResult = runCommand('git status --porcelain --ignore-submodules');
     if (statusResult.success && statusResult.output.trim()) {
       setStatus('uncommitted-changes');
 
@@ -160,7 +160,7 @@ export default function MergePane({ pane, onComplete, onCancel, mainBranch }: Me
 
       // Stage and commit changes in the worktree
       runCommand('git add -A');
-      const stagedCheck = runCommand('git diff --cached --quiet --ignore-submodules=dirty');
+      const stagedCheck = runCommand('git diff --cached --quiet --ignore-submodules');
       if (!stagedCheck.success) {
         // Exit code 1 = there ARE staged changes, commit them
         const commitResult = runCommand(`git commit -F -`, undefined, finalMessage);

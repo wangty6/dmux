@@ -34,7 +34,7 @@ export interface GitStatus {
 export function getGitStatus(repoPath: string): GitStatus {
   try {
     LogService.getInstance().info(`Getting git status for: ${repoPath}`, 'mergeValidation');
-    const statusOutput = execSync('git status --porcelain --ignore-submodules=dirty', {
+    const statusOutput = execSync('git status --porcelain --ignore-submodules', {
       cwd: repoPath,
       encoding: 'utf-8',
       stdio: 'pipe',
@@ -263,14 +263,30 @@ export function stageAllChanges(repoPath: string): { success: boolean; error?: s
   try {
     LogService.getInstance().info(`Staging all changes in: ${repoPath}`, 'stageAllChanges');
 
+    // Detect submodule paths so we can exclude them from staging
+    const submodulePaths = getSubmodulePaths(repoPath);
+    if (submodulePaths.length > 0) {
+      LogService.getInstance().info(`Detected submodules: ${submodulePaths.join(', ')}`, 'stageAllChanges');
+    }
+
     execSync('git add -A', {
       cwd: repoPath,
       stdio: 'pipe',
     });
 
-    // Check if anything was actually staged (ignore submodule content changes)
+    // Unstage any submodule entries — they cause commit failures
+    for (const subPath of submodulePaths) {
+      try {
+        execSync(`git reset HEAD -- "${subPath}"`, { cwd: repoPath, stdio: 'pipe' });
+        LogService.getInstance().info(`Unstaged submodule: ${subPath}`, 'stageAllChanges');
+      } catch {
+        // Submodule might not be staged, ignore
+      }
+    }
+
+    // Check if anything was actually staged (ignore submodules)
     try {
-      execSync('git diff --cached --quiet --ignore-submodules=dirty', {
+      execSync('git diff --cached --quiet --ignore-submodules', {
         cwd: repoPath,
         stdio: 'pipe',
       });
@@ -293,6 +309,26 @@ export function stageAllChanges(repoPath: string): { success: boolean; error?: s
 }
 
 /**
+ * Get submodule paths from .gitmodules
+ */
+function getSubmodulePaths(repoPath: string): string[] {
+  try {
+    const output = execSync('git config --file .gitmodules --get-regexp path', {
+      cwd: repoPath,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    });
+    return output
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map(line => line.replace(/^submodule\..*\.path\s+/, '').trim());
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Commit staged changes with a message
  */
 export function commitChanges(
@@ -304,7 +340,7 @@ export function commitChanges(
     LogService.getInstance().info(`Commit message: ${message}`, 'commitChanges');
 
     // Check if there are staged changes before committing (ignore submodule content changes)
-    execSync('git diff --cached --quiet --ignore-submodules=dirty', {
+    execSync('git diff --cached --quiet --ignore-submodules', {
       cwd: repoPath,
       stdio: 'pipe',
     });

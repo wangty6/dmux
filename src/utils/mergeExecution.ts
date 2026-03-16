@@ -172,7 +172,7 @@ export function completeMerge(repoPath: string, message?: string): MergeResult {
 
     // Check if there are staged changes before committing
     try {
-      execSync('git diff --cached --quiet --ignore-submodules=dirty', { cwd: repoPath, stdio: 'pipe' });
+      execSync('git diff --cached --quiet --ignore-submodules', { cwd: repoPath, stdio: 'pipe' });
       // Nothing staged — only commit if we're in merge state (git requires it to finalize)
       if (!isInMergeState(repoPath)) {
         return { success: true };
