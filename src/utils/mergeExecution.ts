@@ -170,6 +170,17 @@ export function completeMerge(repoPath: string, message?: string): MergeResult {
       };
     }
 
+    // Check if there are staged changes before committing
+    try {
+      execSync('git diff --cached --quiet', { cwd: repoPath, stdio: 'pipe' });
+      // Nothing staged — only commit if we're in merge state (git requires it to finalize)
+      if (!isInMergeState(repoPath)) {
+        return { success: true };
+      }
+    } catch {
+      // Staged changes exist — proceed
+    }
+
     // Complete the merge
     const commitMsg = message || 'Merge branch with resolved conflicts';
     execSync(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, {

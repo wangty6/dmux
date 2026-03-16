@@ -1,6 +1,6 @@
 {
   "name": "@wangty6/dmux",
-  "version": "5.4.1-wangty6.6",
+  "version": "5.4.1-wangty6.7",
   "description": "Tmux pane manager with AI agent integration for parallel development workflows",
   "type": "module",
   "author": "Justin Schroeder",

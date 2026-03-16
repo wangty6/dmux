@@ -34,7 +34,7 @@ export interface GitStatus {
 export function getGitStatus(repoPath: string): GitStatus {
   try {
     LogService.getInstance().info(`Getting git status for: ${repoPath}`, 'mergeValidation');
-    const statusOutput = execSync('git status --porcelain', {
+    const statusOutput = execSync('git status --porcelain --ignore-submodules=dirty', {
       cwd: repoPath,
       encoding: 'utf-8',
       stdio: 'pipe',
@@ -304,13 +304,15 @@ export function commitChanges(
     LogService.getInstance().info(`Commit message: ${message}`, 'commitChanges');
 
     // Check if there are staged changes before committing
-    const stagedCheck = execSync('git diff --cached --quiet', {
+    execSync('git diff --cached --quiet', {
       cwd: repoPath,
       stdio: 'pipe',
     });
-  } catch (stagedError) {
-    // git diff --cached --quiet exits with 1 if there ARE staged changes (which is good)
-    // This is expected behavior - continue with commit
+    // Exit 0 = nothing staged — this is OK, not an error
+    LogService.getInstance().info(`No staged changes in ${repoPath}, skipping commit`, 'commitChanges');
+    return { success: true };
+  } catch {
+    // Exit 1 = staged changes exist — proceed with commit
   }
 
   try {
