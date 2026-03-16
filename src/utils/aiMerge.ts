@@ -104,7 +104,7 @@ export function getComprehensiveDiff(repoPath: string): { diff: string; summary:
 
   try {
     // Get staged changes first, then fall back to unstaged if nothing staged
-    let diff = execSync('git diff --cached', {
+    let diff = execSync('git diff --cached --ignore-submodules=dirty', {
       cwd: repoPath,
       encoding: 'utf-8',
       stdio: 'pipe',
@@ -115,7 +115,7 @@ export function getComprehensiveDiff(repoPath: string): { diff: string; summary:
 
     // If nothing staged, check unstaged changes
     if (!diff.trim()) {
-      diff = execSync('git diff', {
+      diff = execSync('git diff --ignore-submodules=dirty', {
         cwd: repoPath,
         encoding: 'utf-8',
         stdio: 'pipe',
@@ -125,7 +125,7 @@ export function getComprehensiveDiff(repoPath: string): { diff: string; summary:
     }
 
     // Get file summary
-    const statusCmd = staged ? 'git diff --cached --stat' : 'git diff --stat';
+    const statusCmd = staged ? 'git diff --cached --stat --ignore-submodules=dirty' : 'git diff --stat --ignore-submodules=dirty';
     const summary = execSync(statusCmd, {
       cwd: repoPath,
       encoding: 'utf-8',

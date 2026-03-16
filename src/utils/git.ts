@@ -154,7 +154,7 @@ export function getCurrentBranch(cwd?: string): string {
  */
 export async function hasUncommittedChangesAsync(cwd?: string): Promise<boolean> {
   try {
-    const status = await execAsync('git status --porcelain', { cwd, silent: true });
+    const status = await execAsync('git status --porcelain --ignore-submodules=dirty', { cwd, silent: true });
     return status.trim().length > 0;
   } catch {
     return false;
@@ -167,7 +167,7 @@ export async function hasUncommittedChangesAsync(cwd?: string): Promise<boolean>
  */
 export function hasUncommittedChanges(cwd?: string): boolean {
   try {
-    const status = execSync('git status --porcelain', {
+    const status = execSync('git status --porcelain --ignore-submodules=dirty', {
       cwd,
       encoding: 'utf8',
       stdio: 'pipe'

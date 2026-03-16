@@ -158,7 +158,7 @@ export default function MergePane({ pane, onComplete, onCancel, mainBranch }: Me
 
       // Stage and commit changes in the worktree
       runCommand('git add -A');
-      const stagedCheck = runCommand('git diff --cached --quiet');
+      const stagedCheck = runCommand('git diff --cached --quiet --ignore-submodules=dirty');
       if (!stagedCheck.success) {
         // Exit code 1 = there ARE staged changes, commit them
         const commitResult = runCommand(`git commit -m "${finalMessage}"`);

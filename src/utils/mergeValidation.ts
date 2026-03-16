@@ -268,9 +268,9 @@ export function stageAllChanges(repoPath: string): { success: boolean; error?: s
       stdio: 'pipe',
     });
 
-    // Check if anything was actually staged
+    // Check if anything was actually staged (ignore submodule content changes)
     try {
-      execSync('git diff --cached --quiet', {
+      execSync('git diff --cached --quiet --ignore-submodules=dirty', {
         cwd: repoPath,
         stdio: 'pipe',
       });
@@ -303,8 +303,8 @@ export function commitChanges(
     LogService.getInstance().info(`Committing changes in: ${repoPath}`, 'commitChanges');
     LogService.getInstance().info(`Commit message: ${message}`, 'commitChanges');
 
-    // Check if there are staged changes before committing
-    execSync('git diff --cached --quiet', {
+    // Check if there are staged changes before committing (ignore submodule content changes)
+    execSync('git diff --cached --quiet --ignore-submodules=dirty', {
       cwd: repoPath,
       stdio: 'pipe',
     });
@@ -338,6 +338,11 @@ export function commitChanges(
           errorMessage = stderr.trim();
         }
       }
+    }
+    // "nothing to commit" is not a real failure — submodule dirt or race condition
+    if (errorMessage.includes('nothing to commit') || errorMessage.includes('nothing added to commit')) {
+      LogService.getInstance().info(`Nothing to commit in ${repoPath} (likely submodule-only changes), treating as success`, 'commitChanges');
+      return { success: true };
     }
     LogService.getInstance().error(`Commit failed in ${repoPath}: ${errorMessage}`, 'commitChanges');
     return {
